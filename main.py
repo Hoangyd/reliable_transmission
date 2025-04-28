@@ -4,6 +4,4 @@ def ma_hoa_caesar(text, shift=3):
         if char.isalpha():
             offset = 65 if char.isupper() else 97
             ket_qua += chr((ord(char) - offset + shift) % 26 + offset)
-        else:
-            ket_qua += char
-    return ket_qua
+ 
