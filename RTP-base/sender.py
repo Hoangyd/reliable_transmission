@@ -1,100 +1,112 @@
-from scapy.all import *
-import struct
-import zlib
-import sys
-import time
+import argparse
 import socket
-from utils import PacketHeader, compute_checksum  # Import từ utils.py
+import struct
+import sys
 
-# Các hằng số cho các loại gói tin
-START = 0
-END = 1
-DATA = 2
-ACK = 3
+from utils import PacketHeader, compute_checksum
 
-# Hàm tạo gói tin với header sử dụng PacketHeader từ utils.py
-def create_packet(seq_num, type, payload=b''):
-    header = PacketHeader(type=type, seq_num=seq_num, length=len(payload), checksum=0)
-    header.checksum = compute_checksum(header)
-    return bytes(header) + payload
+def split_message(message, max_packet_size):
+     # TODO: Divide the message into chunks according to max_packet_size
+    chunks = [message[i:i + max_packet_size] for i in range(0, len(message), max_packet_size)]
+    return chunks
 
-# Hàm gửi tin cậy
-def reliable_send(sock, addr, file_data, window_size=4):
-    chunk_size = 1472
-    chunks = [file_data[i:i+chunk_size] for i in range(0, len(file_data), chunk_size)]
-    total_packets = len(chunks)
+def create_packet(seq_num, data, packet_type):
+    # TODO: Create packet
+    if isinstance(data, str):
+        data = data.encode()  #Convert data into bytes
+    pkt_header = PacketHeader(type=packet_type, seq_num=seq_num, length=len(data))
+    pkt_header.checksum = compute_checksum(pkt_header / data)
+    return pkt_header / data #This helps combine package header and data to create a complete package
+
     
-    base = 0
-    next_seq = 0
-    acked = set()
+def wait_for_ack(sock, timeout=0.5):
+    #TODO: Wait for the ACK from the receiver. If time's out, return None
+    try:
+        sock.settimeout(timeout)
+        data, _ = sock.recvfrom(1024) #data: be received from socket; _: IP and port of the receiver
+        ack_seq_num = struct.unpack("!I", data[4:8])[0] #unpack data and use [0] to take ack_seq_num 
+        return ack_seq_num
+    except socket.timeout:
+        print("Timeout waiting for ACK.")
+        return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
 
-    sock.settimeout(1.0)
+def send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count=0):
+    """Send START/END control packet and wait for ACK (retry max 5 times if packet_type == 0)."""
+    packet = create_packet(seq_num, data, packet_type=packet_type)
+    s.sendto(bytes(packet), (receiver_ip, receiver_port))
 
-    # Gửi gói tin START
-    print("Đang gửi gói tin START...")
-    start_packet = create_packet(0, START)
-    sock.sendto(start_packet, addr)
+    print(f"Sending {label} packet with seq = {seq_num}, waiting for ACK (max 500ms)...")
+    ack = wait_for_ack(s, timeout=0.5)
 
-    while True:
-        try:
-            data, _ = sock.recvfrom(2048)
-            pkt_header = PacketHeader(data[:16])
-            if pkt_header.type == ACK and pkt_header.seq_num == 1:
-                print("Nhận ACK cho gói START.")
-                break
-        except socket.timeout:
-            sock.sendto(start_packet, addr)
+    if ack is not None:
+        print(f"ACK received for {label} packet: {ack}")
+    else:
+        print(f"No ACK for {label} packet. Retry count = {retry_count}")
+        if packet_type == 1 and retry_count < 5:
+            send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count + 1)
+        elif packet_type == 0:
+            send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count + 1)
+            
 
-    print("Đang gửi các gói tin DATA...")
-    while base < total_packets:
-        while next_seq < base + window_size and next_seq < total_packets:
-            packet = create_packet(next_seq + 1, DATA, chunks[next_seq])
-            sock.sendto(packet, addr)
-            print(f"Đã gửi gói tin DATA {next_seq + 1}")
-            next_seq += 1
+def sender(receiver_ip, receiver_port, window_size):
+    # TODO: Open socket to send message 
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        try:
-            data, _ = sock.recvfrom(2048)
-            pkt_header = PacketHeader(data[:16])
-            if pkt_header.type == ACK:
-                if pkt_header.seq_num > base:
-                    for i in range(base, pkt_header.seq_num):
-                        acked.add(i)
-                    base = pkt_header.seq_num
-        except socket.timeout:
-            print("Đã hết thời gian chờ, gửi lại các gói tin chưa được ACK.")
-            for i in range(base, min(base + window_size, total_packets)):
-                if i not in acked:
-                    packet = create_packet(i + 1, DATA, chunks[i])
-                    sock.sendto(packet, addr)
-                    print(f"Đã gửi lại gói tin DATA {i + 1}")
+    # TODO: Send start packet
+    send_control_packet(s, 0, receiver_ip, receiver_port, packet_type=0, data="START", label="START")
 
-    print("Đang gửi gói tin END...")
-    end_packet = create_packet(total_packets + 1, END)
-    sock.sendto(end_packet, addr)
+    # TODO: Enter the message to be sent
+    message = sys.stdin.read() # It is entered from a file
+    max_packet_size = 1472  
+    chunks = split_message(message, max_packet_size) # Split the message into chunks
 
-    while True:
-        try:
-            data, _ = sock.recvfrom(2048)
-            pkt_header = PacketHeader(data[:16])
-            if pkt_header.type == ACK and pkt_header.seq_num == total_packets + 1:
-                print("Nhận ACK cho gói END. Truyền tải hoàn tất.")
-                break
-        except socket.timeout:
-            sock.sendto(end_packet, addr)
+    # TODO: initialize values 
+    seq_num = 1 #because the seq_num for START packet is 0
+    window_start = 0
+    window_end = min(window_size, len(chunks)) # the maximum chunks to be sent
+    special_ack = 1
 
-# Chương trình chính
+    # sequence:     1, 2, 3 , ... 16, 17
+    # window_start: 0, 1, 2,  ... 15, 16
+
+    while window_start < len(chunks):
+        for i in range(window_start, window_end): #not including window_end
+            packet = create_packet(seq_num + i - window_start, chunks[i], packet_type=2)
+            s.sendto(bytes(packet), (receiver_ip, receiver_port))
+            print(f"Sender sent a packet with seq =", seq_num + i - window_start)
+            ack = wait_for_ack(s)
+            print(f"ACK was received: {ack}")
+
+            if ack is not None and ack < seq_num + window_size:
+                special_ack = max(special_ack, ack)
+                print(f"Special ACK was received: {special_ack}")
+
+        print(f"Special ACK was finally received: {special_ack}")
+        if special_ack > seq_num:
+                window_start = special_ack - 1
+                seq_num = special_ack
+                window_end = min(window_start + window_size, len(chunks))
+
+    send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type=1, data="END", label="END")
+    s.close()
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "receiver_ip", help="The IP address of the host that receiver is running on"
+    )
+    parser.add_argument(
+        "receiver_port", type=int, help="The port number on which receiver is listening"
+    )
+    parser.add_argument(
+        "window_size", type=int, help="Maximum number of outstanding packets"
+    )
+    args = parser.parse_args()
+
+    sender(args.receiver_ip, args.receiver_port, args.window_size)
+
 if __name__ == "__main__":
-    receiver_ip = "127.0.0.1"
-    receiver_port = 12345
-    window_size = 4
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    receiver_addr = (receiver_ip, receiver_port)
-
-    with open('test_scripts/test_message.txt', 'rb') as f:
-        file_data = f.read()
-
-    reliable_send(sock, receiver_addr, file_data, window_size)
-
-    sock.close()
+    main()  
