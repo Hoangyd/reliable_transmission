@@ -2,6 +2,8 @@ import argparse
 import socket
 import struct
 import sys
+import time
+
 
 from utils import PacketHeader, compute_checksum
 
@@ -52,46 +54,50 @@ def send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, dat
             
 
 def sender(receiver_ip, receiver_port, window_size):
-    # TODO: Open socket to send message 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    # TODO: Send start packet
     send_control_packet(s, 0, receiver_ip, receiver_port, packet_type=0, data="START", label="START")
 
-    # TODO: Enter the message to be sent
-    message = sys.stdin.read() # It is entered from a file
+    message = sys.stdin.read()
     max_packet_size = 1472  
-    chunks = split_message(message, max_packet_size) # Split the message into chunks
+    chunks = split_message(message, max_packet_size)
 
-    # TODO: initialize values 
-    seq_num = 1 #because the seq_num for START packet is 0
+    seq_num = 1
     window_start = 0
-    window_end = min(window_size, len(chunks)) # the maximum chunks to be sent
-    special_ack = 1
-
-    # sequence:     1, 2, 3 , ... 16, 17
-    # window_start: 0, 1, 2,  ... 15, 16
+    window_end = min(window_size, len(chunks))
 
     while window_start < len(chunks):
-        for i in range(window_start, window_end): #not including window_end
-            packet = create_packet(seq_num + i - window_start, chunks[i], packet_type=2)
-            s.sendto(bytes(packet), (receiver_ip, receiver_port))
-            print(f"Sender sent a packet with seq =", seq_num + i - window_start)
-            ack = wait_for_ack(s)
-            print(f"ACK was received: {ack}")
+        # Gửi toàn bộ gói tin trong cửa sổ
+        for i in range(window_start, window_end):
+            pkt = create_packet(seq_num + i - window_start, chunks[i], packet_type=2)
+            s.sendto(bytes(pkt), (receiver_ip, receiver_port))
+            print(f"Sender sent packet with seq = {seq_num + i - window_start}")
 
-            if ack is not None and ack < seq_num + window_size:
-                special_ack = max(special_ack, ack)
-                print(f"Special ACK was received: {special_ack}")
+        # Chờ ACK tích lũy trong khoảng thời gian timeout
+        start_time = time.time()
+        timeout = 0.5
+        latest_ack = seq_num - 1  # ACK khởi đầu
 
-        print(f"Special ACK was finally received: {special_ack}")
-        if special_ack > seq_num:
-                window_start = special_ack - 1
-                seq_num = special_ack
-                window_end = min(window_start + window_size, len(chunks))
+        while time.time() - start_time < timeout:
+            ack = wait_for_ack(s, timeout=timeout - (time.time() - start_time))
+            if ack is not None and ack > latest_ack:
+                latest_ack = ack
+                print(f"ACK received: {ack}")
+                if latest_ack >= seq_num + window_size:
+                    break  # đủ ACK, không cần đợi nữa
 
+        if latest_ack >= seq_num:
+            shift = latest_ack - seq_num + 1
+            window_start += shift
+            seq_num = latest_ack + 1
+            window_end = min(window_start + window_size, len(chunks))
+        else:
+            print("No new ACK received, retransmitting window...")
+
+    # Gửi END packet
     send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type=1, data="END", label="END")
     s.close()
+
 
 def main():
     parser = argparse.ArgumentParser()
