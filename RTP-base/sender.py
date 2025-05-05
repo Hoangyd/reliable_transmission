@@ -109,14 +109,9 @@ def sender(receiver_ip, receiver_port, window_size):
             window_end = min(window_start + window_size, len(chunks))
         else:
             print("No new ACK received, retransmitting window...")
-
-
     # Gửi END packet
     send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type=1, data="END", label="END")
     s.close()
-
-
-
 
 def main():
     parser = argparse.ArgumentParser()
