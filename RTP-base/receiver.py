@@ -36,11 +36,9 @@ def receiver(receiver_ip, receiver_port, window_size):
         pkt_header, msg = parse_packet(packet)
 
         if not is_valid_checksum(pkt_header, msg):
-            #===========print("Checksum mismatch. Dropping packet.")
             continue
 
         if pkt_header.type == 0:  # Gói START
-            #===========print("\nSTART packet was received.")
             expected_seq = 1
             send_ack(s, expected_seq, address)
             continue
@@ -50,14 +48,12 @@ def receiver(receiver_ip, receiver_port, window_size):
 
             # Bỏ qua các gói nằm ngoài cửa sổ nhận
             if seq >= expected_seq + window_size:
-                #===========print(f"Packet with seq = {seq} is outside the window. Dropping.")
                 continue
 
             # Lưu các gói nhận sai thứ tự vào bộ đệm và chờ xử lý
             if seq >= expected_seq:
                 if seq not in buffer:
                     buffer[seq] = msg
-                    #===========print(f"Buffered packet with seq = {seq}")
 
             # Nếu gói mong đợi có trong bộ đệm
             while expected_seq in buffer:
@@ -68,7 +64,6 @@ def receiver(receiver_ip, receiver_port, window_size):
             send_ack(s, expected_seq, address)
 
         elif pkt_header.type == 1:  # Gói END
-            #===========print("END packet was received.")
             expected_seq += 1
             send_ack(s, expected_seq, address)
             break

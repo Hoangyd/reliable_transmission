@@ -30,8 +30,8 @@ def wait_for_ack(sock, timeout=0.5):
     #TODO: Wait for the ACK from the receiver. If time's out, return None
     try:
         sock.settimeout(timeout)
-        data, _ = sock.recvfrom(1024) #data: be received from socket; _: IP and port of the receiver
-        ack_seq_num = struct.unpack("!I", data[4:8])[0] #unpack data and use [0] to take ack_seq_num
+        data, _ = sock.recvfrom(1024)
+        ack_seq_num = struct.unpack("!I", data[4:8])[0]
         return ack_seq_num
     except socket.timeout:
         print("Timeout waiting for ACK.")
@@ -57,9 +57,9 @@ def send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, dat
         print(f"No ACK for {label} packet. Retry count = {retry_count}")
         if packet_type == 1 and retry_count < 5:
             send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count + 1)
-        elif packet_type == 0:
+        elif packet_type == 0 and retry_count < 5:
             send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count + 1)
-           
+             
 
 
 def sender(receiver_ip, receiver_port, window_size):

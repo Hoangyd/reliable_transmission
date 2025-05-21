@@ -57,7 +57,7 @@ def send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, dat
         print(f"No ACK for {label} packet. Retry count = {retry_count}")
         if packet_type == 1 and retry_count < 5:
             send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count + 1)
-        elif packet_type == 0:
+        elif packet_type == 0 and retry_count < 5:
             send_control_packet(s, seq_num, receiver_ip, receiver_port, packet_type, data, label, retry_count + 1)
            
 
@@ -75,34 +75,37 @@ def sender(receiver_ip, receiver_port, window_size):
     packet_states = {
         seq + 1: {
             "acked": False,
-            "sent_time": None,
             "data": chunk
         }
         for seq, chunk in enumerate(chunks)
     }
 
    # total_packets = len(packet_states)
-    timeout = 0.5
     base_seq = 1
 
     while not all(p["acked"] for p in packet_states.values()):
-        # Gửi các gói trong cửa sổ nếu chưa gửi hoặc bị timeout
+        # Gửi các gói trong cửa sổ nếu chưa
         for seq in range(base_seq, base_seq + window_size):
             if seq in packet_states:
                 state = packet_states[seq]
-                now = time.time()
-                if not state["acked"] and (state["sent_time"] is None or now - state["sent_time"] >= timeout):
-                    pkt = create_packet(seq, state["data"], packet_type=2)
-                    sock.sendto(bytes(pkt), (receiver_ip, receiver_port))
-                    state["sent_time"] = now
-                    print(f"Sent packet seq={seq}")
+                if not state["acked"]:  # Chỉ gửi nếu chưa nhận được ACK
+                        pkt = create_packet(seq, state["data"], packet_type=2)
+                        sock.sendto(bytes(pkt), (receiver_ip, receiver_port))
+                        print(f"Sent packet seq={seq}")
+
 
         # Nhận ACKa
-        ack = wait_for_ack(sock)
-        if ack is not None and ack in packet_states:
-            if not packet_states[ack]["acked"]:
-                packet_states[ack]["acked"] = True
-                print(f"ACK received: {ack}")
+        timeout = 0.5
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            ack = wait_for_ack(sock, timeout=0.05)  # Kiểm tra ACK mỗi 50ms
+            if ack is not None:
+                if ack in packet_states and not packet_states[ack]["acked"]:
+                    packet_states[ack]["acked"] = True
+                    print(f"ACK received: {ack}")
+            else:
+                break  # Nếu không còn ACK thì thoát khỏi vòng lặp nhận ACKs
+
 
         # Trượt cửa sổ nếu có thể
         while base_seq in packet_states and packet_states[base_seq]["acked"]:
